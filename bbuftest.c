@@ -4,6 +4,9 @@
 #include "bbuf.h"
 #include "butil.h"
 
+#define TEST_CHECK(condition, msg)		\
+	if (!(condition)) do { butil_log(0, "FAIL: %s:%d - %s, %s\n", __FUNCTION__, __LINE__, #condition, msg); return -1; } while(0)
+
 // unicode file data including byte-order-marks
 //
 unsigned char ucs2le_txt[] = {
@@ -58,67 +61,74 @@ unsigned char utf8nb_txt[] = {
 };
 unsigned int utf8nb_txt_len = 51;
 
+static int create_temp_file(file_t **pfile, char *name, size_t nname)
+{
+	file_t *file;
+	char tmpfilename[MAX_PATH];
+	int result;
+	
+	// get a temp file name
+	//
+	result = file_get_temp("bbuftemp", tmpfilename, sizeof(tmpfilename));
+	if (result)
+	{
+		butil_log(0, "FAIL: %s: Could not get temp file\n", __FUNCTION__);
+		return result;
+	}
+	// open it for append
+	//
+	file = file_create(tmpfilename, openForAppend);
+	if (!file)
+	{
+		butil_log(0, "FAIL: %s: Could not open tempfile %s\n", __FUNCTION__, tmpfilename);
+		return -1;
+	}
+	butil_log(2, "Opened temp file %s\n", tmpfilename);
+	if (name && nname)
+	{
+		strncpy(name, tmpfilename, nname - 1);
+		tmpfilename[nname - 1] = '\0';
+	}
+	*pfile = file;
+	return 0;
+}
+
 int filetest()
 {
-	file_t *f1;
-	char tmpfile[MAX_PATH];
+	file_t *file;
+	char filename[MAX_PATH];
 	char buffer[128];
 	size_t fsize;
 	time_t fmodtime;
 	int result;
 	int cnt;
 	int rcnt;
-	
-	// create a temporay file
-	//
-	result = file_get_temp("bbuftemp", tmpfile, sizeof(tmpfile));
-	if (result)
-	{
-		butil_log(0, "FAIL: Could not get temp file\n");
-		return -1;
-	}
-	// open it for append
-	//
-	f1 = file_create(tmpfile, openForAppend);
-	if (!f1)
-	{
-		butil_log(0, "FAIL: Could not open tempfile\n");
-		return -1;
-	}
-	butil_log(2, "Opened temp file %s\n", tmpfile);
+
+	result = create_temp_file(&file, filename, sizeof(filename));
+	TEST_CHECK(result == 0, "Can't create temp file");
 	
 	// put some data in it
 	//
 	strcpy(buffer, "hello\nworld\n");
-	cnt = f1->file_write(f1, buffer, strlen(buffer));
-	if (cnt != strlen(buffer))
-	{
-		butil_log(0, "FAIL: Wrote only %d of %d\n", cnt, strlen(buffer));
-		file_destroy(f1);
-		return -1;
-	}
+	cnt = file->file_write(file, buffer, strlen(buffer));
+	TEST_CHECK(cnt == strlen(buffer), "Can't write File");
+	
 	// close it, to flush
 	//
-	file_destroy(f1);
+	file_destroy(file);
 	
 	// get its info
 	//
-	result = file_info(tmpfile, &fsize, &fmodtime);
-	if (result)
-	{
-		butil_log(0, "FAIL: Cant get tmpfile info\n");
-		return -1;
-	}
+	result = file_info(filename, &fsize, &fmodtime);
+	TEST_CHECK(result == 0, "Can't Get file_info");
+
 	butil_log(2, "tmpfile is %u bytes mod at %u\n", fsize, fmodtime);
 	
-	if (fsize != cnt)
-	{
-		butil_log(0, "FAIL: Expected tmpfile to be %d bytes, not %d\n", cnt, fsize);
-		return -1;
-	}
+	TEST_CHECK(fsize == strlen(buffer), "File is not size of buffer written");
+
 	// move the temp file to this directory
 	//
-	result = file_move(tmpfile, "file://./testfile.txt");
+	result = file_move(filename, "file://./testfile.txt");
 	if (result)
 	{
 		butil_log(0, "FAIL: Cant move tmpfile to testfile.txt\n");
@@ -126,102 +136,63 @@ int filetest()
 	}
 	// make sure it moved not copied
 	//
-	result = file_info(tmpfile, &fsize, &fmodtime);
-	if (!result)
-	{
-		butil_log(0, "FAIL: tmpfile still has info\n");
-		return -1;
-	}
+	result = file_info(filename, &fsize, &fmodtime);
+	TEST_CHECK(result != 0, "temp file still exists (wasn't moved)");
+
 	// delete it now
 	//
 	result = file_delete("file://./testfile.txt");
-	if (result)
-	{
-		butil_log(0, "FAIL: Cant delete testfile.txt\n");
-		return -1;
-	}		
+	TEST_CHECK(result == 0, "Can't delete testfile");
+
 	// open a non existing file for read
 	//
-	f1 = file_create("file://testfile.txt", openExistingForRead);
-	if (f1)
-	{
-		butil_log(0, "FAIL: Could open testfile.txt\n");
-		file_destroy(f1);
-		return -1;
-	}
+	file = file_create("file://testfile.txt", openExistingForRead);
+	TEST_CHECK(file == NULL, "Could open non-existing file for read");
+
 	// now create the file
 	//
-	f1 = file_create("file://testfile.txt", openForWrite);
-	if (!f1)
-	{
-		butil_log(0, "FAIL: Could not open testfile.txt for write\n");
-		return -1;
-	}
+	file = file_create("file://testfile.txt", openForWrite);
+	TEST_CHECK(file != NULL, "Count not open testfile.txt for write");
+
 	// write some content
 	//
 	strcpy(buffer, "hello\nworld\n");
-	cnt = f1->file_write(f1, buffer, strlen(buffer));
-	if (cnt != strlen(buffer))
-	{
-		butil_log(0, "FAIL: Wrote only %d of %d\n", cnt, strlen(buffer));
-		file_destroy(f1);
-		return -1;
-	}
-	file_destroy(f1);
+	cnt = file->file_write(file, buffer, strlen(buffer));
+	TEST_CHECK(cnt == strlen(buffer), "Didn't write whole of buffer");
+
+	file_destroy(file);
 	
 	// now open existing file for read
 	//
-	f1 = file_create("file://testfile.txt", openExistingForRead);
-	if (!f1)
-	{
-		butil_log(0, "FAIL: Could not open testfile.txt for read\n");
-		return -1;
-	}
+	file = file_create("file://testfile.txt", openExistingForRead);
+	TEST_CHECK(file != NULL, "Could not open testfile.txt for read");
+
 	// read the content
 	//
-	rcnt = f1->file_read(f1, buffer, sizeof(buffer));
-	if (rcnt != cnt)
-	{
-		butil_log(0, "FAIL: Read only %d of %d\n", rcnt, cnt);
-		file_destroy(f1);
-		return -1;
-	}
+	rcnt = file->file_read(file, buffer, sizeof(buffer));
+	TEST_CHECK(cnt == strlen(buffer), "Didn't read whole of buffer");
+
 	// seek to offset 3
 	//
-	result = f1->file_seek(f1, 3);
-	if (result)
-	{
-		butil_log(0, "FAIL: Seek failed\n");
-		file_destroy(f1);
-		return -1;
-	}
+	result = file->file_seek(file, 3);
+	TEST_CHECK(result == 0, "Seek Failed");
+
 	// read 2 bytes
 	//
-	rcnt = f1->file_read(f1, buffer, 2);
-	if (rcnt != 2)
-	{
-		butil_log(0, "FAIL: Read only %d of %d\n", rcnt, 2);
-		file_destroy(f1);
-		return -1;
-	}
+	rcnt = file->file_read(file, buffer, 2);
+	TEST_CHECK(rcnt == 2, "Didn't read exactly 2 bytes");
+
 	// make sure we got the right bytes
 	//
-	if (buffer[0] != 'l' && buffer[1] != 'o')
-	{
-		butil_log(0, "FAIL: Expected \"lo\" at offset 3, got %c%c\n", buffer[0], buffer[1]);
-		file_destroy(f1);
-		return -1;		
-	}
-	file_destroy(f1);	
+	TEST_CHECK(buffer[0] == 'l' && buffer[1] == 'o', "Didn't read \"lo\" at offset 3");
+
+	file_destroy(file);
 	
 	// cleanup
 	//
 	result = file_delete("testfile.txt");
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't delete file\n");
-		return -1;
-	}
+	TEST_CHECK(result == 0, "Can't delete file");
+
 	return 0;
 }
 
@@ -229,8 +200,8 @@ int buffertest()
 {
 	buffer_t *buffer;
 	file_t *file;
-	char tmpfile[MAX_PATH];
-	char tmpoutfile[MAX_PATH];
+	char filename[MAX_PATH];
+	char tmpoutfilename[MAX_PATH];
 	file_t *outfile;
 	char data[128];
 	uint8_t *linedata;
@@ -241,188 +212,90 @@ int buffertest()
 	
 	// create a temporay file
 	//
-	result = file_get_temp("bbuftemp", tmpfile, sizeof(tmpfile));
-	if (result)
-	{
-		butil_log(0, "FAIL: Could not get temp file\n");
-		return -1;
-	}
-	// open it for append
-	//
-	file = file_create(tmpfile, openForAppend);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open tempfile\n");
-		return -1;
-	}
-	butil_log(2, "Opened temp file %s\n", tmpfile);
+	result = create_temp_file(&file, filename, sizeof(filename));
+	TEST_CHECK(result == 0, "Can't make temp file");
 	
 	// put some data in it
 	//
 	strcpy(data, "hello\nworld\ndangle");
 	cnt = file->file_write(file, data, strlen(data));
-	if (cnt != strlen(data))
-	{
-		butil_log(0, "FAIL: Wrote only %d of %d\n", cnt, strlen(data));
-		file_destroy(file);
-		return -1;
-	}
-	// close it
+	TEST_CHECK(cnt == strlen(data), "Can't write File");
+	
+	// close it, to flush
 	//
 	file_destroy(file);
+	
+	// re-open for reading
+	//
+	file = file_create(filename, openExistingForRead);
+	TEST_CHECK(file != NULL, "Could not open file for read");
 
-	file = file_create(tmpfile, openExistingForRead);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open file for read\n");
-		return -1;
-	}
 	// create a buffer to hold it using default buffering
 	//
 	buffer = buffer_create("testing", file, NULL, 0); 
-	if (!buffer)
-	{
-		butil_log(0, "FAIL: Couldn't make buffer\n");
-		return -1;
-	}
+	TEST_CHECK(buffer != NULL, "Could not make buffer");
+
 	// read the buffer
 	//
 	result = buffer_read(buffer);
-	if (result)
-	{
-		butil_log(0, "FAIL: Couldn't read buffer\n");
-		return -1;
-	}
-	if (buffer->line_count != 3)
-	{
-		butil_log(0, "FAIL: Expected 3 lines, got %d\n", buffer->line_count);
-		return -1;
-	}
-	// access line 1
+	TEST_CHECK(result == 0, "Could not read buffer");
+	TEST_CHECK(buffer->line_count == 3, "Expected 3 lines in buffer");
+
+	// access line 0
 	//
 	result = buffer_get_line_content(buffer, 0, &linedata, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't edit line 0\n");
-		return -1;
-	}
-	if (linelen != 6)
-	{
-		butil_log(0, "FAIL: line 0 Expected 6 bytes, got %d\n", linelen);
-		return -1;
-	}
-	if (memcmp(linedata, "hello\n", linelen))
-	{
-		butil_log(0, "FAIL: line 0: expected \"hello\\n\" got \"%s\"\n", linedata);
-		return -1;
-	}	
+	TEST_CHECK(result == 0, "Can't edit line 0");
+	TEST_CHECK(linelen == 6, "Expected 6 bytes in line 0");
+	TEST_CHECK(!memcmp(linedata, "hello\n", linelen), "Expected \"hello\\n\" in line 0");
+
+	// access line 1
+	//
+	result = buffer_get_line_content(buffer, 1, &linedata, &linelen);
+	TEST_CHECK(result == 0, "Can't edit line 1");
+	TEST_CHECK(linelen == 6, "Expected 6 bytes in line 1");
+	TEST_CHECK(!memcmp(linedata, "world\n", linelen), "Expected \"world\\n\" in line 1");
+
 	// access line 2
 	//
-	result = buffer_get_line_content(buffer, 1, &linedata, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't edit line 2\n");
-		return -1;
-	}
-	if (linelen != 6)
-	{
-		butil_log(0, "FAIL: line 1 Expected 6 bytes, got %d\n", linelen);
-		return -1;
-	}
-	if (memcmp(linedata, "world\n", linelen))
-	{
-		butil_log(0, "FAIL: line 1: expected \"world\\n\" got \"%s\"\n", linedata);
-		return -1;
-	}
+	result = buffer_get_line_content(buffer, 2, &linedata, &linelen);
+	TEST_CHECK(result == 0, "Can't edit line 2");
+	TEST_CHECK(linelen == 6, "Expected 6 bytes in line 2");
+	TEST_CHECK(!memcmp(linedata, "dangle", linelen), "Expected \"dangle\" in line 2");
+
 	// access line 3
 	//
-	result = buffer_get_line_content(buffer, 2, &linedata, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't edit line 2\n");
-		return -1;
-	}
-	if (linelen != 6)
-	{
-		butil_log(0, "FAIL: line 2 Expected 6 bytes, got %d\n", linelen);
-		return -1;
-	}
-	if (memcmp(linedata, "dangle", linelen))
-	{
-		butil_log(0, "FAIL: line 1: expected \"dangle\" got \"%s\"\n", linedata);
-		return -1;
-	}
-	// access line 4
-	//
 	result = buffer_get_line_content(buffer, 3, &linedata, &linelen);
-	if (!result)
-	{
-		butil_log(0, "FAIL: Could edit line 4\n");
-		return -1;
-	}
-	// access line 2 again
+	TEST_CHECK(result != 0, "Could edit line 3 but no line there");
+
+	// access line 1 again
 	//
 	result = buffer_get_line_content(buffer, 1, &linedata, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't edit line 2\n");
-		return -1;
-	}
-	if (linelen != 6)
-	{
-		butil_log(0, "FAIL: line 1 Expected 6 bytes, got %d\n", linelen);
-		return -1;
-	}
-	if (memcmp(linedata, "world\n", linelen))
-	{
-		butil_log(0, "FAIL: line 1: expected \"world\\n\" got \"%s\"\n", linedata);
-		return -1;
-	}
-	// Edit line 1
+	TEST_CHECK(result == 0, "Can't edit line 1");
+	TEST_CHECK(linelen == 6, "Expected 6 bytes in line 1");
+	TEST_CHECK(!memcmp(linedata, "world\n", linelen), "Expected \"world\\n\" in line 1");
+
+	// Edit line 0
 	//
 	result = buffer_edit_line(buffer, 0, &linetext, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't edit line 2\n");
-		return -1;
-	}
+	TEST_CHECK(result == 0, "Can't edit line 0");
 	butil_log(2, "Line0=%s\n", linetext);
-	if (strcmp(linetext, "hello\n"))
-	{
-		butil_log(0, "FAIL: Expected null-terminated \"hello\\n\", got \"%s\"\n", linetext);
-		return -1;
-	}
+	TEST_CHECK(!strcmp(linetext, "hello\n"), "Expected null-terminated \"hello\\n");
+
 	// create a new temp file
 	//
-	result = file_get_temp("bbuftemp", tmpoutfile, sizeof(tmpoutfile));
-	if (result)
-	{
-		butil_log(0, "FAIL: Could not get temp file\n");
-		return -1;
-	}
-	// open it for append
-	//
-	outfile = file_create(tmpoutfile, openForAppend);
-	if (!outfile)
-	{
-		butil_log(0, "FAIL: Could not open out tempfile\n");
-		return -1;
-	}
-	butil_log(2, "Opened temp out file %s\n", tmpoutfile);
+	result = create_temp_file(&outfile, tmpoutfilename, sizeof(tmpoutfilename));
+	TEST_CHECK(result == 0, "Can't create new temp file");
 	
 	// write the buffer to the outfile
 	//
 	result = buffer_write(buffer, outfile, textASCII);
-	if (result)
-	{
-		butil_log(0, "FAIL: Could not write out tempfile\n");
-		return -1;
-	}
+	TEST_CHECK(result == 0, "Could not write out tempfile");
+
 	file_destroy(outfile);
 	
 	// check contents of outfile [TODO]
 	
-	file_delete(tmpoutfile);
+	file_delete(tmpoutfilename);
 	
 	// destroy buffer
 	//
@@ -434,770 +307,301 @@ int buffertest()
 	
 	// delete file
 	//
-	file_delete(tmpfile);
+	file_delete(filename);
 	
 	return 0;
 }
 
-int unicodetest()
+static int get_text_for_encoding(text_encoding_t encoding, bool nobom, char **text, size_t *txtlen)
+{
+	char *linetext;
+	const char *encname;
+	size_t linelen;
+	
+	switch (encoding)
+	{
+	case textBINARY:
+	case textASCII:
+	default:
+		butil_log(0, "FAIL: %s:%d Bad encoding for encoded read test\n");
+		*text = "";
+		*txtlen = 0;
+		return -1;
+	case textUTF8:
+		if (nobom) 
+		{
+			linetext = utf8nb_txt;
+			linelen = utf8nb_txt_len;
+			encname = "UTF-8";
+		}
+		else
+		{
+			linetext = utf8_txt;
+			linelen = utf8_txt_len;
+			encname = "UTF-8";
+		}
+		break;
+	case textUCS2LE:
+		linetext = ucs2le_txt;
+		linelen = ucs2le_txt_len;
+		encname = "UCS2-LE";
+		break;
+	case textUCS2BE:
+		linetext = ucs2be_txt;
+		linelen = ucs2be_txt_len;
+		encname = "UCS2-BE";
+		break;
+	case textUCS4LE:
+		linetext = ucs4le_txt;
+		linelen = ucs4le_txt_len;
+		encname = "UCS4-LE";
+		break;
+	case textUCS4BE:
+		linetext = ucs4be_txt;
+		linelen = ucs4be_txt_len;
+		encname = "UCS4-BE";
+		break;
+	}
+	*text = linetext;
+	*txtlen = linelen;
+	return 0;
+}
+
+int test_unicode_read(text_encoding_t encoding, bool nobom)
 {
 	buffer_t *buffer;
-	file_t *file;
-	char tmpfile[MAX_PATH];
-	char data[128];
 	buffer_t *outbuffer;
-	char tmpoutfile[MAX_PATH];
+	file_t *file;
 	file_t *outfile;
+	char filename[MAX_PATH];
+	char tmpoutfilename[MAX_PATH];
+	char data[128];
 	uint8_t *linedata;
 	char *linetext;
 	size_t linelen;
 	int cnt;
 	int result;
+
+	result = get_text_for_encoding(encoding, nobom, &linetext, &linelen);
+	TEST_CHECK(result == 0, "No text for encoding");
 	
 	// create a temporay file
 	//
-	result = file_get_temp("bbuftemp", tmpfile, sizeof(tmpfile));
-	if (result)
-	{
-		butil_log(0, "FAIL: Could not get temp file\n");
-		return -1;
-	}
-	// ------------------ UTF-8
-	//
-	// open it for append
-	//
-	file = file_create(tmpfile, openForAppend);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open tempfile\n");
-		return -1;
-	}
-	// put UTF-8 data in it
-	//
-	cnt = file->file_write(file, utf8_txt, utf8_txt_len);
-	if (cnt != utf8_txt_len)
-	{
-		butil_log(0, "FAIL: Wrote only %d of %d\n", cnt, utf8_txt_len);
-		return -1;
-	}
-	file_destroy(file);
-
-	// re-open file for reading
-	file = file_create(tmpfile, openExistingForRead);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open file for read\n");
-		return -1;
-	}
-	// create a buffer to hold it using default buffering
-	//
-	buffer = buffer_create("unicode", file, NULL, 0); 
-	if (!buffer)
-	{
-		butil_log(0, "FAIL: Couldn't make buffer\n");
-		return -1;
-	}
-	// read the buffer
-	//
-	result = buffer_read(buffer);
-	if (result)
-	{
-		butil_log(0, "FAIL: Couldn't read buffer\n");
-		return -1;
-	}
-	if (buffer->original_encoding != textUTF8)
-	{
-		butil_log(0, "FAIL: Didn't sniff UTF-8\n");
-		return -1;
-	}
-	// Edit line 1
-	//
-	result = buffer_edit_line(buffer, 0, &linetext, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't edit line 1\n");
-		return -1;
-	}
-	butil_log(2, "Line0=%s\n", linetext);
-
-	// Edit line 2
-	//
-	result = buffer_edit_line(buffer, 1, &linetext, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't edit line 2\n");
-		return -1;
-	}
-	butil_log(2, "Line1=%s\n", linetext);
+	result = create_temp_file(&file, filename, sizeof(filename));
+	TEST_CHECK(result == 0, "Can't make temp file");
 	
-	file_destroy(file);
-
-	// ------------------ UTF-8 No BOM
+	// put encoded data in it
 	//
-	// open it for append
-	//
-	file = file_create(tmpfile, openForAppend);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open tempfile\n");
-		return -1;
-	}
-	// put UTF-8 data in it
-	//
-	cnt = file->file_write(file, utf8nb_txt, utf8nb_txt_len);
-	if (cnt != utf8nb_txt_len)
-	{
-		butil_log(0, "FAIL: Wrote only %d of %d\n", cnt, utf8_txt_len);
-		return -1;
-	}
+	cnt = file->file_write(file, linetext, linelen);
+	TEST_CHECK(cnt == linelen, "Didn't write all of encoded text");
 	file_destroy(file);
 
 	// re-open file for reading
-	file = file_create(tmpfile, openExistingForRead);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open file for read\n");
-		return -1;
-	}
+	file = file_create(filename, openExistingForRead);
+	TEST_CHECK(file != NULL, "Could not open file for read");
+
 	// create a buffer to hold it using default buffering
 	//
 	buffer = buffer_create("unicode", file, NULL, 0); 
-	if (!buffer)
-	{
-		butil_log(0, "FAIL: Couldn't make buffer\n");
-		return -1;
-	}
+	TEST_CHECK(buffer != NULL, "Could not make buffer");
+
 	// read the buffer
 	//
 	result = buffer_read(buffer);
-	if (result)
-	{
-		butil_log(0, "FAIL: Couldn't read buffer\n");
-		return -1;
-	}
-	if (buffer->original_encoding != textUTF8)
-	{
-		butil_log(0, "FAIL: Didn't sniff UTF-8\n");
-		return -1;
-	}
-	// Edit line 1
+	TEST_CHECK(result == 0, "Could not read buffer");
+	TEST_CHECK(buffer->original_encoding == encoding, "Didn't sniff expected encoding");
+
+	// Edit line 0
 	//
 	result = buffer_edit_line(buffer, 0, &linetext, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't edit line 1\n");
-		return -1;
-	}
+	TEST_CHECK(result == 0, "Can't edit line 0");
 	butil_log(2, "Line0=%s\n", linetext);
 
-	// Edit line 2
-	//
-	result = buffer_edit_line(buffer, 1, &linetext, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't edit line 2\n");
-		return -1;
-	}
-	butil_log(2, "Line1=%s\n", linetext);
-	
-	file_destroy(file);
-
-	// ------------------ UCS2-LE
-	//
-	// open it for write
-	//
-	file = file_create(tmpfile, openForWrite);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open tempfile\n");
-		return -1;
-	}
-	// put UCS2LE data in it
-	//
-	cnt = file->file_write(file, ucs2le_txt, ucs2le_txt_len);
-	if (cnt != ucs2le_txt_len)
-	{
-		butil_log(0, "FAIL: Wrote only %d of %d\n", cnt, ucs2le_txt_len);
-		return -1;
-	}
-	file_destroy(file);
-
-	// re-open file for reading
-	file = file_create(tmpfile, openExistingForRead);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open file for read\n");
-		return -1;
-	}
-	// create a buffer to hold it using default buffering
-	//
-	buffer = buffer_create("unicode", file, NULL, 0); 
-	if (!buffer)
-	{
-		butil_log(0, "FAIL: Couldn't make buffer\n");
-		return -1;
-	}
-	// read the buffer
-	//
-	result = buffer_read(buffer);
-	if (result)
-	{
-		butil_log(0, "FAIL: Couldn't read buffer\n");
-		return -1;
-	}
-	if (buffer->original_encoding != textUCS2LE)
-	{
-		butil_log(0, "FAIL: Didn't sniff UCS2LE\n");
-		return -1;
-	}
 	// Edit line 1
 	//
-	result = buffer_edit_line(buffer, 0, &linetext, &linelen);
-	if (result)
+	if (encoding == textUTF8)
 	{
-		butil_log(0, "FAIL: Can't edit line 1\n");
-		return -1;
+		result = buffer_edit_line(buffer, 1, &linetext, &linelen);
+		TEST_CHECK(result == 0, "Can't edit line 1");
+		butil_log(2, "Line1=%s\n", linetext);
 	}
-	butil_log(2, "Line0=%s\n", linetext);
-
-	// ------------------ UCS2-BE
-	//
-	// open it for write
-	//
-	file = file_create(tmpfile, openForWrite);
-	if (!file)
+	else
 	{
-		butil_log(0, "FAIL: Could not open tempfile\n");
-		return -1;
-	}
-	// put UCS2BE data in it
-	//
-	cnt = file->file_write(file, ucs2be_txt, ucs2be_txt_len);
-	if (cnt != ucs2be_txt_len)
-	{
-		butil_log(0, "FAIL: Wrote only %d of %d\n", cnt, ucs2be_txt_len);
-		return -1;
-	}
-	file_destroy(file);
-
-	// re-open file for reading
-	file = file_create(tmpfile, openExistingForRead);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open file for read\n");
-		return -1;
-	}
-	// create a buffer to hold it using default buffering
-	//
-	buffer = buffer_create("unicode", file, NULL, 0); 
-	if (!buffer)
-	{
-		butil_log(0, "FAIL: Couldn't make buffer\n");
-		return -1;
-	}
-	// read the buffer
-	//
-	result = buffer_read(buffer);
-	if (result)
-	{
-		butil_log(0, "FAIL: Couldn't read buffer\n");
-		return -1;
-	}
-	if (buffer->original_encoding != textUCS2BE)
-	{
-		butil_log(0, "FAIL: Didn't sniff UCS2BE\n");
-		return -1;
-	}
-	// Edit line 1
-	//
-	result = buffer_edit_line(buffer, 0, &linetext, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't edit line 1\n");
-		return -1;
-	}
-	butil_log(2, "Line0=%s\n", linetext);
-
-	// ------------------ UCS4-LE
-	//
-	// open it for write
-	//
-	file = file_create(tmpfile, openForWrite);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open tempfile\n");
-		return -1;
-	}
-	// put UCS4LE data in it
-	//
-	cnt = file->file_write(file, ucs4le_txt, ucs4le_txt_len);
-	if (cnt != ucs4le_txt_len)
-	{
-		butil_log(0, "FAIL: Wrote only %d of %d\n", cnt, ucs4le_txt_len);
-		return -1;
-	}
-	file_destroy(file);
-
-	// re-open file for reading
-	file = file_create(tmpfile, openExistingForRead);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open file for read\n");
-		return -1;
-	}
-	// create a buffer to hold it using default buffering
-	//
-	buffer = buffer_create("unicode", file, NULL, 0); 
-	if (!buffer)
-	{
-		butil_log(0, "FAIL: Couldn't make buffer\n");
-		return -1;
-	}
-	// read the buffer
-	//
-	result = buffer_read(buffer);
-	if (result)
-	{
-		butil_log(0, "FAIL: Couldn't read buffer\n");
-		return -1;
-	}
-	if (buffer->original_encoding != textUCS4LE)
-	{
-		butil_log(0, "FAIL: Didn't sniff UC4LE\n");
-		return -1;
-	}
-	// Edit line 1
-	//
-	result = buffer_edit_line(buffer, 0, &linetext, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't edit line 1\n");
-		return -1;
-	}
-	butil_log(2, "Line0=%s\n", linetext);
-
-	// ------------------ UCS4-BE
-	//
-	// open it for write
-	//
-	file = file_create(tmpfile, openForWrite);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open tempfile\n");
-		return -1;
-	}
-	// put UCS4BE data in it
-	//
-	cnt = file->file_write(file, ucs4be_txt, ucs4be_txt_len);
-	if (cnt != ucs4be_txt_len)
-	{
-		butil_log(0, "FAIL: Wrote only %d of %d\n", cnt, ucs4be_txt_len);
-		return -1;
-	}
-	file_destroy(file);
-
-	// re-open file for reading
-	file = file_create(tmpfile, openExistingForRead);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open file for read\n");
-		return -1;
-	}
-	// create a buffer to hold it using default buffering
-	//
-	buffer = buffer_create("unicode", file, NULL, 0); 
-	if (!buffer)
-	{
-		butil_log(0, "FAIL: Couldn't make buffer\n");
-		return -1;
-	}
-	// read the buffer
-	//
-	result = buffer_read(buffer);
-	if (result)
-	{
-		butil_log(0, "FAIL: Couldn't read buffer\n");
-		return -1;
-	}
-	if (buffer->original_encoding != textUCS4BE)
-	{
-		butil_log(0, "FAIL: Didn't sniff UCS4BE\n");
-		return -1;
-	}
-	// Edit line 1
-	//
-	result = buffer_edit_line(buffer, 0, &linetext, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't edit line 1\n");
-		return -1;
-	}
-	butil_log(2, "Line0=%s\n", linetext);
-
-	// destroy buffer
-	//
-	buffer_destroy(buffer);
-	
-	// and file
-	//
-	file_destroy(file);
-	
-	// delete file
-	//
-	file_delete(tmpfile);
-	
-	//---------------------------------- writing ---------------------
-
-	// create a temporay file
-	//
-	result = file_get_temp("bbuftemp", tmpfile, sizeof(tmpfile));
-	if (result)
-	{
-		butil_log(0, "FAIL: Could not get temp file\n");
-		return -1;
-	}
-	// open temp file for append
-	//
-	file = file_create(tmpfile, openForAppend);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open tempfile\n");
-		return -1;
-	}
-	// put UTF-8 data in it
-	//
-	cnt = file->file_write(file, utf8nb_txt, utf8nb_txt_len);
-	if (cnt != utf8nb_txt_len)
-	{
-		butil_log(0, "FAIL: Wrote only %d of %d\n", cnt, utf8_txt_len);
-		return -1;
-	}
-	file_destroy(file);
-
-	// re-open file for reading
-	file = file_create(tmpfile, openExistingForRead);
-	if (!file)
-	{
-		butil_log(0, "FAIL: Could not open file for read\n");
-		return -1;
-	}
-	// create a buffer to hold it using default buffering
-	//
-	buffer = buffer_create("unicode", file, NULL, 0); 
-	if (!buffer)
-	{
-		butil_log(0, "FAIL: Couldn't make buffer\n");
-		return -1;
-	}
-	// read the buffer
-	//
-	result = buffer_read(buffer);
-	if (result)
-	{
-		butil_log(0, "FAIL: Couldn't read buffer\n");
-		return -1;
-	}
-	if (buffer->original_encoding != textUTF8)
-	{
-		butil_log(0, "FAIL: Didn't sniff UTF-8\n");
-		return -1;
+		result = buffer_edit_line(buffer, 1, &linetext, &linelen);
+		TEST_CHECK(result != 0, "Could edit line 1");
 	}	
-	// ----------------------- UCS2LE ---------------------------------
-	//
-	// create a new output temp file
-	//
-	result = file_get_temp("bbuftemp", tmpoutfile, sizeof(tmpoutfile));
-	if (result)
-	{
-		butil_log(0, "FAIL: Could not get temp file\n");
-		return -1;
-	}
-	// open it for append
-	//
-	outfile = file_create(tmpoutfile, openForAppend);
-	if (!outfile)
-	{
-		butil_log(0, "FAIL: Could not open out tempfile\n");
-		return -1;
-	}
-	butil_log(2, "Opened temp out file %s for UCS2LE\n", tmpoutfile);
-	
-	// write the buffer to the outfile UCS2LE
-	//
-	result = buffer_write(buffer, outfile, textUCS2LE);
-	if (result)
-	{
-		butil_log(0, "FAIL: Could not write out tempfile\n");
-		return -1;
-	}
-	file_destroy(outfile);
-	
-	// open new out file for reading
-	//
-	outfile = file_create(tmpoutfile, openExistingForRead);
-	if (!outfile)
-	{
-		butil_log(0, "FAIL: Could not open out tempfile for read\n");
-		return -1;
-	}
-	// buffer it
-	//
-	outbuffer = buffer_create("ucodecout", outfile, NULL, 0);
-	if (! outbuffer)
-	{
-		butil_log(0, "FAIL: Couldn't make out buffer\n");
-		return -1;
-	}
-	// read it
-	//
-	result = buffer_read(outbuffer);
-	if (result)
-	{
-		butil_log(0, "FAIL: Couldn't read buffer\n");
-		return -1;
-	}
-	if (outbuffer->original_encoding != textUCS2LE)
-	{
-		butil_log(0, "FAIL: Didn't sniff UCS2LE\n");
-		return -1;
-	}
-	// check the first 2 bytes for proper endianness and that BOM is stripped
-	//
-	result = buffer_get_line_content(outbuffer, 0, &linedata, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't get line content\n");
-		return -1;
-	}
-	if (linedata[0] != 'T' || linedata[1] != '\0' || linedata[2] != 'h' || linedata[3] != '\0')
-	{
-		butil_log(0, "FAIL: Expected \"T,0,h,0\" \"got %c0x%02X%c0x%02X\"\n",
-				linedata[0], linedata[1], linedata[2], linedata[3]);
-		return -1;
-	}
-	buffer_destroy(outbuffer);
-	file_destroy(outfile);
-	file_delete(tmpoutfile);
-	
-	// ----------------------- UCS2BE	
-	//
-	// open it for write
-	//
-	outfile = file_create(tmpoutfile, openForWrite);
-	if (!outfile)
-	{
-		butil_log(0, "FAIL: Could not open out tempfile\n");
-		return -1;
-	}
-	butil_log(2, "Opened temp out file %s for UCS2BE\n", tmpoutfile);
-	
-	// write the buffer to the outfile UCS2BE
-	//
-	result = buffer_write(buffer, outfile, textUCS2BE);
-	if (result)
-	{
-		butil_log(0, "FAIL: Could not write out tempfile\n");
-		return -1;
-	}
-	file_destroy(outfile);
-	
-	// open new out file for reading
-	//
-	outfile = file_create(tmpoutfile, openExistingForRead);
-	if (!outfile)
-	{
-		butil_log(0, "FAIL: Could not open out tempfile for read\n");
-		return -1;
-	}
-	// buffer it
-	//
-	outbuffer = buffer_create("ucodecout", outfile, NULL, 0);
-	if (! outbuffer)
-	{
-		butil_log(0, "FAIL: Couldn't make out buffer\n");
-		return -1;
-	}
-	// read it
-	//
-	result = buffer_read(outbuffer);
-	if (result)
-	{
-		butil_log(0, "FAIL: Couldn't read buffer\n");
-		return -1;
-	}
-	if (outbuffer->original_encoding != textUCS2BE)
-	{
-		butil_log(0, "FAIL: Didn't sniff UCS2BE\n");
-		return -1;
-	}
-	// check the first 2 bytes for proper endianness and that BOM is stripped
-	//
-	result = buffer_get_line_content(outbuffer, 0, &linedata, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't get line content\n");
-		return -1;
-	}
-	if (linedata[0] != '\0' || linedata[1] != 'T' || linedata[2] != '\0' || linedata[3] != 'h')
-	{
-		butil_log(0, "FAIL: Expected \"0,t,0,h\" \"got 0x%02X%c0x%02X%c\"\n",
-				linedata[0], linedata[1], linedata[2], linedata[3]);
-		return -1;
-	}
-	buffer_destroy(outbuffer);
-	file_destroy(outfile);
-	file_delete(tmpoutfile);
-	
-	// ----------------------- UCS4LE
-	//
-	// open it for write
-	//
-	outfile = file_create(tmpoutfile, openForWrite);
-	if (!outfile)
-	{
-		butil_log(0, "FAIL: Could not open out tempfile\n");
-		return -1;
-	}
-	butil_log(2, "Opened temp out file %s for UCS4LE\n", tmpoutfile);
-	
-	// write the buffer to the outfile UCS2BE
-	//
-	result = buffer_write(buffer, outfile, textUCS4LE);
-	if (result)
-	{
-		butil_log(0, "FAIL: Could not write out tempfile\n");
-		return -1;
-	}
-	file_destroy(outfile);
-	
-	// open new out file for reading
-	//
-	outfile = file_create(tmpoutfile, openExistingForRead);
-	if (!outfile)
-	{
-		butil_log(0, "FAIL: Could not open out tempfile for read\n");
-		return -1;
-	}
-	// buffer it
-	//
-	outbuffer = buffer_create("ucodecout", outfile, NULL, 0);
-	if (! outbuffer)
-	{
-		butil_log(0, "FAIL: Couldn't make out buffer\n");
-		return -1;
-	}
-	// read it
-	//
-	result = buffer_read(outbuffer);
-	if (result)
-	{
-		butil_log(0, "FAIL: Couldn't read buffer\n");
-		return -1;
-	}
-	if (outbuffer->original_encoding != textUCS4LE)
-	{
-		butil_log(0, "FAIL: Didn't sniff UCS4LE\n");
-		return -1;
-	}
-	// check the first 2 bytes for proper endianness and that BOM is stripped
-	//
-	result = buffer_get_line_content(outbuffer, 0, &linedata, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't get line content\n");
-		return -1;
-	}
-	if (linedata[0] != 'T' || linedata[1] != '\0' || linedata[2] != '\0' || linedata[3] != '\0')
-	{
-		butil_log(0, "FAIL: Expected \"0,t,0,h\" \"got %c0x%02X0x%02X0x%02X\"\n",
-				linedata[0], linedata[1], linedata[2], linedata[3]);
-		return -1;
-	}
-	buffer_destroy(outbuffer);
-	file_destroy(outfile);
-	file_delete(tmpoutfile);
-			
-	// ----------------------- UCS4BE	
-	//
-	// open it for write
-	//
-	outfile = file_create(tmpoutfile, openForWrite);
-	if (!outfile)
-	{
-		butil_log(0, "FAIL: Could not open out tempfile\n");
-		return -1;
-	}
-	butil_log(2, "Opened temp out file %s for UCS4BE\n", tmpoutfile);
-	
-	// write the buffer to the outfile UCS2BE
-	//
-	result = buffer_write(buffer, outfile, textUCS4BE);
-	if (result)
-	{
-		butil_log(0, "FAIL: Could not write out tempfile\n");
-		return -1;
-	}
-	file_destroy(outfile);
-	
-	// open new out file for reading
-	//
-	outfile = file_create(tmpoutfile, openExistingForRead);
-	if (!outfile)
-	{
-		butil_log(0, "FAIL: Could not open out tempfile for read\n");
-		return -1;
-	}
-	// buffer it
-	//
-	outbuffer = buffer_create("ucodecout", outfile, NULL, 0);
-	if (! outbuffer)
-	{
-		butil_log(0, "FAIL: Couldn't make out buffer\n");
-		return -1;
-	}
-	// read it
-	//
-	result = buffer_read(outbuffer);
-	if (result)
-	{
-		butil_log(0, "FAIL: Couldn't read buffer\n");
-		return -1;
-	}
-	if (outbuffer->original_encoding != textUCS4BE)
-	{
-		butil_log(0, "FAIL: Didn't sniff UCS4BE\n");
-		return -1;
-	}
-	// check the first 2 bytes for proper endianness and that BOM is stripped
-	//
-	result = buffer_get_line_content(outbuffer, 0, &linedata, &linelen);
-	if (result)
-	{
-		butil_log(0, "FAIL: Can't get line content\n");
-		return -1;
-	}
-	if (linedata[0] != '\0' || linedata[1] != '\0' || linedata[2] != '\0' || linedata[3] != 'T')
-	{
-		butil_log(0, "FAIL: Expected \"0,0,0,T\" \"got 0x%02X0x%02X0x%02X%c\"\n",
-				linedata[0], linedata[1], linedata[2], linedata[3]);
-		return -1;
-	}
-	buffer_destroy(outbuffer);
-	file_destroy(outfile);
-	file_delete(tmpoutfile);
-	
-	// destroy buffer
-	//
-	buffer_destroy(buffer);
-	
-	// and file
-	//
 	file_destroy(file);
+	file_delete(filename);
+}
+
+int test_unicode_write(text_encoding_t encoding)
+{
+	buffer_t *buffer;
+	buffer_t *outbuffer;
+	file_t *file;
+	file_t *outfile;
+	char filename[MAX_PATH];
+	char tmpoutfilename[MAX_PATH];
+	char data[128];
+	uint8_t *linedata;
+	char *linetext;
+	size_t linelen;
+	int cnt;
+	int result;
+
+	// get utf8 text
+	result = get_text_for_encoding(textUTF8, false, &linetext, &linelen);
+	TEST_CHECK(result == 0, "No text for encoding");
 	
-	// delete file
+	// create a temporay file
 	//
-	file_delete(tmpfile);
+	result = create_temp_file(&file, filename, sizeof(filename));
+	TEST_CHECK(result == 0, "Can't make temp file");
 	
+	// put encoded data in it
+	//
+	cnt = file->file_write(file, linetext, linelen);
+	TEST_CHECK(cnt == linelen, "Didn't write all of encoded text");
+	file_destroy(file);
+
+	// re-open file for reading
+	file = file_create(filename, openExistingForRead);
+	TEST_CHECK(file != NULL, "Could not open file for read");
+
+	// create a buffer to hold it using default buffering
+	//
+	buffer = buffer_create("unicode", file, NULL, 0); 
+	TEST_CHECK(buffer != NULL, "Could not make buffer");
+
+	// read the buffer
+	//
+	result = buffer_read(buffer);
+	TEST_CHECK(result == 0, "Could not read buffer");
+	TEST_CHECK(buffer->original_encoding == textUTF8, "Didn't sniff UTF-8 encoding");
+
+	// create a new temp outfile
+	//
+	result = create_temp_file(&outfile, tmpoutfilename, sizeof(tmpoutfilename));
+	TEST_CHECK(result == 0, "Can't make out temp file");
+
+	// write previous buffer, using encoding, to new out file
+	//
+	result = buffer_write(buffer, outfile, encoding);
+	TEST_CHECK(result == 0, "Could not write out tempfile");
+
+	// close it / flush
+	//
+	file_destroy(outfile);
+	
+	// now re-open the out file for read
+	//
+	outfile = file_create(tmpoutfilename, openExistingForRead);
+	TEST_CHECK(outfile != NULL, "Could not open out tempfile for read");
+
+	// buffer it
+	//
+	outbuffer = buffer_create("ucodecout", outfile, NULL, 0);
+	TEST_CHECK(outbuffer != NULL, "Couldn't make out buffer");
+
+	// read file into buffer
+	//
+	result = buffer_read(outbuffer);
+	TEST_CHECK(result == 0, "Couldn't read buffer");
+	
+	// check that file was in expected encoding
+	//
+	TEST_CHECK(outbuffer->original_encoding == encoding, "Didn't sniff expected encoding");
+
+	// check the first bytes for proper endianness and that BOM is stripped
+	//
+	result = buffer_get_line_content(outbuffer, 0, &linedata, &linelen);
+	TEST_CHECK(result == 0, "Can't get line content");
+
+	switch (encoding)
+	{
+	case textBINARY:
+	case textASCII:
+	default:
+		butil_log(0, "FAIL: %s:%d Bad encoding for encoded write test\n");
+		return -1;		
+	case textUCS2LE:
+		if (linedata[0] != 'T' || linedata[1] != '\0' || linedata[2] != 'h' || linedata[3] != '\0')
+		{
+			butil_log(0, "FAIL: %s:%d Expected \"T,0,h,0\" \"got %c0x%02X%c0x%02X\"\n",
+					__FUNCTION__, __LINE__,
+					linedata[0], linedata[1], linedata[2], linedata[3]);
+			return -1;
+		}
+		break;
+	case textUCS2BE:
+		if (linedata[0] != '\0' || linedata[1] != 'T' || linedata[2] != '\0' || linedata[3] != 'h')
+		{
+			butil_log(0, "FAIL: %s:%d Expected \"0,t,0,h\" \"got 0x%02X%c0x%02X%c\"\n",
+					__FUNCTION__, __LINE__,
+					linedata[0], linedata[1], linedata[2], linedata[3]);
+			return -1;
+		}
+		break;
+	case textUCS4LE:
+		if (linedata[0] != 'T' || linedata[1] != '\0' || linedata[2] != '\0' || linedata[3] != '\0')
+		{
+			butil_log(0, "FAIL: %s:%d Expected \"0,t,0,h\" \"got %c0x%02X0x%02X0x%02X\"\n",
+					__FUNCTION__, __LINE__,
+					linedata[0], linedata[1], linedata[2], linedata[3]);
+			return -1;
+		}
+		break;
+	case textUCS4BE:
+		if (linedata[0] != '\0' || linedata[1] != '\0' || linedata[2] != '\0' || linedata[3] != 'T')
+		{
+			butil_log(0, "FAIL:%s:%d  Expected \"0,0,0,T\" \"got 0x%02X0x%02X0x%02X%c\"\n",
+					__FUNCTION__, __LINE__,
+					linedata[0], linedata[1], linedata[2], linedata[3]);
+			return -1;
+		}
+		break;
+	}
+	buffer_destroy(outbuffer);
+	file_destroy(outfile);
+	file_delete(tmpoutfilename);
+	file_destroy(file);
+	file_delete(filename);
+}
+
+int unicodetest()
+{
+	int result;
+
+	result = test_unicode_read(textUTF8, false);
+	TEST_CHECK(result == 0, "UTF-8 Read");
+
+	result = test_unicode_read(textUTF8, true);
+	TEST_CHECK(result == 0, "UTF-8 with no byte-order-mark");
+
+	result = test_unicode_read(textUCS2LE, true);
+	TEST_CHECK(result == 0, "UCS2-LE Read");
+	
+	result = test_unicode_read(textUCS2BE, true);
+	TEST_CHECK(result == 0, "UCS2-BE Read");
+	
+	result = test_unicode_read(textUCS4LE, true);
+	TEST_CHECK(result == 0, "UCS4-LE Read");
+	
+	result = test_unicode_read(textUCS4BE, true);
+	TEST_CHECK(result == 0, "UCS4-BE Read");
+	
+	result = test_unicode_write(textUCS2LE);
+	TEST_CHECK(result == 0, "UCS2LE Write");
+
+	result = test_unicode_write(textUCS2BE);
+	TEST_CHECK(result == 0, "UCS2BE Write");
+
+	result = test_unicode_write(textUCS4LE);
+	TEST_CHECK(result == 0, "UCS4LE Write");
+
+	result = test_unicode_write(textUCS4BE);
+	TEST_CHECK(result == 0, "UCS4BE Write");
+
 	return 0;
 }
 

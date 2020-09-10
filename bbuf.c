@@ -365,14 +365,30 @@ int buffer_read(buffer_t *buffer)
     //
     switch (buffer->original_encoding)
     {
-    case textBINARY:    fudge = 0;  break;
-    case textASCII:     fudge = 0;  break;
-    case textUTF8:      fudge = (buffer->vbuf[0] == 0xef) ? 3 : 0;  break;
-    case textUCS2LE:    fudge = 2;  break;
-    case textUCS2BE:    fudge = 2;  break;
-    case textUCS4LE:    fudge = 4;  break;
-    case textUCS4BE:    fudge = 4;  break;
-    default:            fudge = 0;  break;
+    case textBINARY:
+        fudge = 0;
+        break;
+    case textASCII:
+        fudge = 0;
+        break;
+    case textUTF8:
+        fudge = ((uint8_t)buffer->vbuf[0] == 0xef) ? 3 : 0;
+        break;
+    case textUCS2LE:
+        fudge = 2;
+        break;
+    case textUCS2BE:
+        fudge = 2;
+        break;
+    case textUCS4LE:
+        fudge = 4;
+        break;
+    case textUCS4BE:
+        fudge = 4;
+        break;
+    default:
+        fudge = 0;
+        break;
     }
     buffer->vbuf_tail = fudge;
     line_offset = buffer->vbuf_offset + buffer->vbuf_tail;
