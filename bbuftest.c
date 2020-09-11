@@ -2,6 +2,8 @@
 #include <stdlib.h>
 
 #include "bbuf.h"
+#include "bfile.h"
+#include "bfilesys.h"
 #include "butil.h"
 
 #define TEST_CHECK(condition, msg)		\
@@ -69,7 +71,7 @@ static int create_temp_file(file_t **pfile, char *name, size_t nname)
 	
 	// get a temp file name
 	//
-	result = file_get_temp("bbuftemp", tmpfilename, sizeof(tmpfilename));
+	result = filesys_get_temp("bbuftemp", tmpfilename, sizeof(tmpfilename));
 	if (result)
 	{
 		butil_log(0, "FAIL: %s: Could not get temp file\n", __FUNCTION__);
@@ -93,110 +95,7 @@ static int create_temp_file(file_t **pfile, char *name, size_t nname)
 	return 0;
 }
 
-int filetest()
-{
-	file_t *file;
-	char filename[MAX_PATH];
-	char buffer[128];
-	size_t fsize;
-	time_t fmodtime;
-	int result;
-	int cnt;
-	int rcnt;
-
-	result = create_temp_file(&file, filename, sizeof(filename));
-	TEST_CHECK(result == 0, "Can't create temp file");
-	
-	// put some data in it
-	//
-	strcpy(buffer, "hello\nworld\n");
-	cnt = file->file_write(file, buffer, strlen(buffer));
-	TEST_CHECK(cnt == strlen(buffer), "Can't write File");
-	
-	// close it, to flush
-	//
-	file_destroy(file);
-	
-	// get its info
-	//
-	result = file_info(filename, &fsize, &fmodtime);
-	TEST_CHECK(result == 0, "Can't Get file_info");
-
-	butil_log(2, "tmpfile is %u bytes mod at %u\n", fsize, fmodtime);
-	
-	TEST_CHECK(fsize == strlen(buffer), "File is not size of buffer written");
-
-	// move the temp file to this directory
-	//
-	result = file_move(filename, "file://./testfile.txt");
-	if (result)
-	{
-		butil_log(0, "FAIL: Cant move tmpfile to testfile.txt\n");
-		return -1;
-	}
-	// make sure it moved not copied
-	//
-	result = file_info(filename, &fsize, &fmodtime);
-	TEST_CHECK(result != 0, "temp file still exists (wasn't moved)");
-
-	// delete it now
-	//
-	result = file_delete("file://./testfile.txt");
-	TEST_CHECK(result == 0, "Can't delete testfile");
-
-	// open a non existing file for read
-	//
-	file = file_create("file://testfile.txt", openForRead);
-	TEST_CHECK(file == NULL, "Could open non-existing file for read");
-
-	// now create the file
-	//
-	file = file_create("file://testfile.txt", openForWrite);
-	TEST_CHECK(file != NULL, "Count not open testfile.txt for write");
-
-	// write some content
-	//
-	strcpy(buffer, "hello\nworld\n");
-	cnt = file->file_write(file, buffer, strlen(buffer));
-	TEST_CHECK(cnt == strlen(buffer), "Didn't write whole of buffer");
-
-	file_destroy(file);
-	
-	// now open existing file for read
-	//
-	file = file_create("file://testfile.txt", openForRead);
-	TEST_CHECK(file != NULL, "Could not open testfile.txt for read");
-
-	// read the content
-	//
-	rcnt = file->file_read(file, buffer, sizeof(buffer));
-	TEST_CHECK(cnt == strlen(buffer), "Didn't read whole of buffer");
-
-	// seek to offset 3
-	//
-	result = file->file_seek(file, 3);
-	TEST_CHECK(result == 0, "Seek Failed");
-
-	// read 2 bytes
-	//
-	rcnt = file->file_read(file, buffer, 2);
-	TEST_CHECK(rcnt == 2, "Didn't read exactly 2 bytes");
-
-	// make sure we got the right bytes
-	//
-	TEST_CHECK(buffer[0] == 'l' && buffer[1] == 'o', "Didn't read \"lo\" at offset 3");
-
-	file_destroy(file);
-	
-	// cleanup
-	//
-	result = file_delete("testfile.txt");
-	TEST_CHECK(result == 0, "Can't delete file");
-
-	return 0;
-}
-
-int httpfiletest()
+int httpbuffertest()
 {
 	file_t *file;
 	buffer_t *buffer;
@@ -230,7 +129,7 @@ static int ftp_cred_callback(const char *url, char *username, size_t nusername, 
 	return 0;
 }
 
-int ftpfiletest()
+int ftpbuffertest()
 {
 	file_t *file;
 	buffer_t *buffer;
@@ -354,7 +253,7 @@ int buffertest()
 	
 	// check contents of outfile [TODO]
 	
-	file_delete(tmpoutfilename);
+	filesys_delete(tmpoutfilename);
 	
 	// destroy buffer
 	//
@@ -366,7 +265,7 @@ int buffertest()
 	
 	// delete file
 	//
-	file_delete(filename);
+	filesys_delete(filename);
 	
 	return 0;
 }
@@ -490,7 +389,7 @@ int test_unicode_read(text_encoding_t encoding, bool nobom)
 		TEST_CHECK(result != 0, "Could edit line 1");
 	}	
 	file_destroy(file);
-	file_delete(filename);
+	filesys_delete(filename);
 }
 
 int test_unicode_write(text_encoding_t encoding)
@@ -622,9 +521,9 @@ int test_unicode_write(text_encoding_t encoding)
 	}
 	buffer_destroy(outbuffer);
 	file_destroy(outfile);
-	file_delete(tmpoutfilename);
+	filesys_delete(tmpoutfilename);
 	file_destroy(file);
-	file_delete(filename);
+	filesys_delete(filename);
 }
 
 int unicodetest()
@@ -669,15 +568,11 @@ int main(int argc, char **argv)
 	
 	butil_set_log_level(5);
 
-	if (filetest())
+	if (httpbuffertest())
 	{
 		return -1;
 	}
-	if (httpfiletest())
-	{
-		return -1;
-	}
-	if (ftpfiletest())
+	if (ftpbuffertest())
 	{
 		return -1;
 	}
