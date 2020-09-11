@@ -17,19 +17,22 @@
 SRCROOT=../../bnet
 include $(SRCROOT)/common/makecommon.mk
 
-SOURCES=$(SRCDIR)/bbuf.c $(SRCDIR)/bline.c $(SRCDIR)/bfile.c $(SRCDIR)/bundo.c
+SOURCES=$(SRCDIR)/bbuf.c $(SRCDIR)/bline.c $(SRCDIR)/bfile.c \
+	$(SRCDIR)/bfile_file.c $(SRCDIR)/bfile_http.c $(SRCDIR)/bfile_ftp.c \
+	$(SRCDIR)/bundo.c
 HEADERS=$(SOURCES:%.c=%.h)
 OBJECTS=$(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 
-LIBS= $(IOLIB) $(UTILLIB) $(HTTPLIB)
-LIBDIRS= $(IO_PATH) $(UTIL_PATH) $(HTTP_PATH)
+LIBS=  $(HTTPLIB) $(FTPLIB) $(IOLIB) $(UTILLIB)
+LIBDIRS= $(IO_PATH) $(UTIL_PATH) $(HTTP_PATH)  $(FTP_PATH)
 LIBINCLS= $(LIBDIRS:%=-I%)
-CFLAGS += $(LIBINCLS) -g 
+CFLAGS += $(LIBINCLS)
+EXTRA_DEFINES += "HTTP_SUPPORT_WEBSOCKET=0 HTTP_SUPPORT_WEBDAV=0"
 
 PROGSOURCES=$(SRCDIR)/bbuftest.c
 PROGOBJECTS=$(OBJDIR)/bbuftest.o
 
-bbuftest: $(PROGOBJECTS) $(OBJDIR)/bbuf.a $(LIBS)
+bbuftest: $(PROGOBJECTS) $(OBJDIR)/bbuf.a $(LIBS) $(TLSDEPS) $(ZLIBDEPS)
 	$(CC) $(CFLAGS) -o $@ $^ $(SYSLIBS)
 
 library: $(OBJDIR)/bbuf.a
@@ -38,10 +41,13 @@ $(OBJDIR)/bbuf.a: $(OBJECTS)
 	$(AR) $(ARFLAGS) $@ $^
 
 clean:
-	rm $(OBJECTS) $(OBJDIR)/bbuf.a
+	rm -f $(OBJECTS) $(OBJDIR)/bbuf.a $(PROGOBJECTS) bbuftest
 
 $(OBJDIR)/bbuf.o: $(SRCDIR)/bbuf.c $(HEADERS)
 $(OBJDIR)/bline.o: $(SRCDIR)/bline.c $(HEADERS)
 $(OBJDIR)/bfile.o: $(SRCDIR)/bfile.c $(HEADERS)
+$(OBJDIR)/bfile_file.o: $(SRCDIR)/bfile_file.c $(HEADERS)
+$(OBJDIR)/bfile_http.o: $(SRCDIR)/bfile_http.c $(HEADERS)
+$(OBJDIR)/bfile_ftp.o: $(SRCDIR)/bfile_ftp.c $(HEADERS)
 $(OBJDIR)/bbuftest.o: $(SRCDIR)/bbuftest.c $(HEADERS)
 

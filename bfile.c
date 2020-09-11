@@ -13,157 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "bfile.h"
+#include "bfile_file.h"
+#include "bfile_http.h"
+#include "bfile_ftp.h"
 #include "bbuf.h"
 #include "butil.h"
 
 /// \file
 ///
-
-/// \brief Close a file:// file
-///
-/// See ::file_close_t for details
-///
-static int file_file_close(file_t *file)
-{
-    int fd = (file ? (int)(uintptr_t)file->priv : -1);
-    
-    if (fd >= 0)
-    {
-        close(fd);
-    }
-    file->priv = NULL;
-    return 0;
-}
-
-/// \brief Read a file:// file
-///
-/// See ::file_read_t for details
-///
-static int file_file_read(file_t *file, uint8_t *buffer, size_t count)
-{
-    int fd = (file ? (int)(uintptr_t)file->priv : -1);
-
-    return read(fd, (char*)buffer, count);
-}
-
-/// \brief Write a file:// file
-///
-/// See ::file_write_t for details
-///
-static int file_file_write(file_t *file, uint8_t *buffer, size_t count)
-{
-    int fd = (file ? (int)(uintptr_t)file->priv : -1);
-
-    return write(fd, (char*)buffer, count);
-}
-
-/// \brief Seek in a file:// file
-///
-/// See ::file_seek_t for details
-///
-static int file_file_seek(file_t *file, uint64_t position)
-{
-    int fd = (file ? (int)(uintptr_t)file->priv : -1);
-
-    file->position = lseek(fd, position, SEEK_SET);
-    return 0;
-}
-
-//-----------------------------------------------------------------------------
-/// \brief Setup a file:// file object
-///
-/// @param[in] file     - a file object with url set
-/// @param[in] open_for - how to open the file, see ::open_attribute_t
-///
-/// @return 0 on success, non-0 on error
-///
-static int file_file_setup(file_t *file, open_attribute_t open_for)
-{
-    int fd;
-    
-    // setup object functions
-    file->file_close    = file_file_close;
-    file->file_read     = file_file_read;
-    file->file_write    = file_file_write;
-    file->file_seek     = file_file_seek;
-    
-    // setup underlying stream
-    switch (open_for)
-    {
-    case openForRead:
-        fd = open(file->url, O_RDONLY | O_CREAT, 0644);
-        break;
-    case openExistingForRead:
-        fd = open(file->url, O_RDONLY, 0644);
-        break;
-    case openForWrite:
-        fd = open(file->url, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        break;
-    case openForAppend:
-        fd = open(file->url, O_WRONLY, 0644);
-        break;
-    }
-    if (fd < 0)
-    {
-        butil_log(2, "Can't open file %s\n", file->url);
-        return -1;
-    }
-    file->priv = (void*)(uintptr_t)fd;
-    return 0;
-}
-
-/// \brief Close a http:// file
-///
-/// See ::file_close_t for details
-///
-static int file_http_close(file_t *file)
-{
-    return 0;
-}
-
-/// \brief Read a http:// file
-///
-/// See ::file_read_t for details
-///
-static int file_http_read(file_t *file, uint8_t *buffer, size_t count)
-{
-    return 0;
-}
-
-/// \brief Write a http:// file
-///
-/// See ::file_write_t for details
-///
-static int file_http_write(file_t *file, uint8_t *buffer, size_t count)
-{
-    return 0;
-}
-
-/// \brief Seek in a http:// file
-///
-/// See ::file_seek_t for details
-///
-static int file_http_seek(file_t *file, uint64_t position)
-{
-    return 0;
-}
-
-//-----------------------------------------------------------------------------
-/// \brief Setup a http:// file object
-///
-/// @param[in] file     - a file object with url set
-/// @param[in] open_for - how to open the file, see ::open_attribute_t
-///
-/// @return 0 on success, non-0 on error
-///
-static int file_http_setup(file_t *file, open_attribute_t open_for)
-{
-    file->file_close    = file_http_close;
-    file->file_read     = file_http_read;
-    file->file_write    = file_http_write;
-    file->file_seek     = file_http_seek;
-    return 0;
-}
 
 /// \brief Get the protocol for a given url
 ///
@@ -210,7 +68,7 @@ static butil_url_scheme_t file_get_scheme(const char *url, char *path, size_t np
     return scheme;
 }
 
-file_t *file_create(const char *url, open_attribute_t open_for)
+file_t *file_create_with_credentials(const char *url, open_attribute_t open_for, credential_callback_t credential_callback)
 {
     file_t *file;
     butil_url_scheme_t scheme;
@@ -232,27 +90,29 @@ file_t *file_create(const char *url, open_attribute_t open_for)
     result = -1;
     
     scheme = file_get_scheme(url, path, sizeof(path));
-
     // setup the object as appropriate for url scheme
     //
     switch (scheme)
     {
     case schemeFILE:
         strncpy(file->url, path, sizeof(file->url) - 1);
-        file->url[sizeof(file->url) - 1] = '\0';    
-        result = file_file_setup(file, open_for);
+        file->url[sizeof(file->url) - 1] = '\0';        
+        result = file_file_setup(file, open_for, credential_callback);
         break;
-    /*
+
     case schemeFTP:
     case schemeSFTP:
+        strncpy(file->url, url, sizeof(file->url) - 1);
+        file->url[sizeof(file->url) - 1] = '\0';        
+        result = file_ftp_setup(file, open_for, credential_callback);
         break;
-    */
+
     case schemeDAV:
     case schemeHTTP:
     case schemeHTTPS:
         strncpy(file->url, url, sizeof(file->url) - 1);
-        file->url[sizeof(file->url) - 1] = '\0';    
-        result = file_file_setup(file, open_for);
+        file->url[sizeof(file->url) - 1] = '\0';        
+        result = file_http_setup(file, open_for, credential_callback);
         break;
     /*
     case schemeSSH:
@@ -273,6 +133,11 @@ file_t *file_create(const char *url, open_attribute_t open_for)
         return NULL;
     }
     return file;
+}
+
+file_t *file_create(const char *url, open_attribute_t open_for)
+{
+    return file_create_with_credentials(url, open_for, NULL);
 }
 
 void file_destroy(file_t *file)

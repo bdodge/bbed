@@ -56,10 +56,9 @@ line_ending_t;
 ///
 typedef enum
 {
-	openForRead,			///< open for reading only, creating the file if it doesn't exist
-	openExistingForRead,	///< open for reading only, failing if file doesn't already exist
-	openForWrite,			///< open for writing only, and remove any existing conten, creating if it doesn't exist
-	openForAppend			///< open for appending (write) leaving any existing content
+	openForRead,			///< open existing file for reading only, failing if file doesn't already exist
+	openForWrite,			///< open for writing only, and remove any existing content, creating if it doesn't exist
+	openForAppend			///< open existing file for appending (write) leaving any existing content
 }
 open_attribute_t;
 
@@ -128,6 +127,20 @@ typedef struct tag_file
 }
 file_t;
 
+/// File open credential callback function type
+///
+/// \brief Fetch credentials from caller for file create that needs them
+///
+/// @param[in]     url			- url credentials needed for
+/// @param[in/out] username		- user name buffer for caller to fill in
+/// @param[in]     nusername	- size of user name buffer in bytes
+/// @param[in/put] password 	- password buffer for caller to fill in
+/// @param[in]     npassword	- size of password buffer in bytes
+///
+/// @return < 0 on error, 0 if not ready, and > 0 if ready (or closed)
+///
+typedef int (*credential_callback_t)(const char *url, char *username, size_t nusername, char *password, size_t npassword);
+
 /// \brief Create a file object from a url
 ///
 /// @param[in] url - url of file to open (if no protocol in url, defaults to file://)
@@ -135,6 +148,15 @@ file_t;
 /// @return a 
 ///
 file_t *file_create(const char *url, const open_attribute_t open_for);
+
+/// \brief Create a file object from a url with credentials, similar to ::file_create 
+///
+/// @param[in] url 					- url of file to open (if no protocol in url, defaults to file://)
+/// @param[in] open_for 			- how to open the url, see ::open_attribute_t for more info
+/// @param[in] credential_callback	- credential fetching function, see ::user_credentials_t for more into
+/// @return a 
+///
+file_t *file_create_with_credentials(const char *url, const open_attribute_t open_for, credential_callback_t credential_callback);
 
 /// \brief Destroy a file that was created with ::file_create
 ///
@@ -203,7 +225,7 @@ int file_move(const char *source_url, const char *destination_url);
 ///
 /// @param[in]  hint	- use this string some place in the path if possible, may be NULL
 /// @param[out] url		- buffer to receive url of temporary file
-/// @param[in]  size  	- sizeoof url buffer in bytes
+/// @param[in]  size  	- sizeof url buffer in bytes
 ///
 /// @return 0 on success, non-0 on error (can't create file)
 ///

@@ -146,7 +146,7 @@ int filetest()
 
 	// open a non existing file for read
 	//
-	file = file_create("file://testfile.txt", openExistingForRead);
+	file = file_create("file://testfile.txt", openForRead);
 	TEST_CHECK(file == NULL, "Could open non-existing file for read");
 
 	// now create the file
@@ -164,7 +164,7 @@ int filetest()
 	
 	// now open existing file for read
 	//
-	file = file_create("file://testfile.txt", openExistingForRead);
+	file = file_create("file://testfile.txt", openForRead);
 	TEST_CHECK(file != NULL, "Could not open testfile.txt for read");
 
 	// read the content
@@ -194,6 +194,65 @@ int filetest()
 	TEST_CHECK(result == 0, "Can't delete file");
 
 	return 0;
+}
+
+int httpfiletest()
+{
+	file_t *file;
+	buffer_t *buffer;
+	int result;
+	
+	// get a known url
+	//
+	file = file_create("http://www.google.com/index.html", openForRead);
+	TEST_CHECK(file != NULL, "Can't open googles index.html");
+	
+	// create a buffer to hold it using default buffering
+	//
+	buffer = buffer_create("testing", file, NULL, 0); 
+	TEST_CHECK(buffer != NULL, "Could not make buffer");
+
+	// read the buffer
+	//
+	result = buffer_read(buffer);
+	TEST_CHECK(result == 0, "Could not read buffer");
+	
+	buffer_destroy(buffer);	
+	file_destroy(file);
+}
+
+static int ftp_cred_callback(const char *url, char *username, size_t nusername, char *password, size_t npassword)
+{
+	strncpy(username, "bnet_test_account", nusername - 1);
+	username[nusername - 1] = '\0';
+	strncpy(password, "jabberwocky", npassword - 1);
+	username[npassword - 1] = '\0';
+	return 0;
+}
+
+int ftpfiletest()
+{
+	file_t *file;
+	buffer_t *buffer;
+	int result;
+	
+	// get a known url
+	//
+	file = file_create_with_credentials("ftp://ftp.drivehq.com/test.jpg", openForRead, ftp_cred_callback);
+	TEST_CHECK(file != NULL, "Can't open remote ftp file");
+	
+	// create a buffer to hold it using default buffering
+	//
+	buffer = buffer_create("testing", file, NULL, 0); 
+	TEST_CHECK(buffer != NULL, "Could not make buffer");
+
+	// read the buffer
+	//
+	result = buffer_read(buffer);
+	TEST_CHECK(result == 0, "Could not read buffer");
+	
+	buffer_destroy(buffer);	
+	file_destroy(file);
 }
 
 int buffertest()
@@ -227,7 +286,7 @@ int buffertest()
 	
 	// re-open for reading
 	//
-	file = file_create(filename, openExistingForRead);
+	file = file_create(filename, openForRead);
 	TEST_CHECK(file != NULL, "Could not open file for read");
 
 	// create a buffer to hold it using default buffering
@@ -397,7 +456,7 @@ int test_unicode_read(text_encoding_t encoding, bool nobom)
 	file_destroy(file);
 
 	// re-open file for reading
-	file = file_create(filename, openExistingForRead);
+	file = file_create(filename, openForRead);
 	TEST_CHECK(file != NULL, "Could not open file for read");
 
 	// create a buffer to hold it using default buffering
@@ -465,7 +524,7 @@ int test_unicode_write(text_encoding_t encoding)
 	file_destroy(file);
 
 	// re-open file for reading
-	file = file_create(filename, openExistingForRead);
+	file = file_create(filename, openForRead);
 	TEST_CHECK(file != NULL, "Could not open file for read");
 
 	// create a buffer to hold it using default buffering
@@ -495,7 +554,7 @@ int test_unicode_write(text_encoding_t encoding)
 	
 	// now re-open the out file for read
 	//
-	outfile = file_create(tmpoutfilename, openExistingForRead);
+	outfile = file_create(tmpoutfilename, openForRead);
 	TEST_CHECK(outfile != NULL, "Could not open out tempfile for read");
 
 	// buffer it
@@ -611,6 +670,14 @@ int main(int argc, char **argv)
 	butil_set_log_level(5);
 
 	if (filetest())
+	{
+		return -1;
+	}
+	if (httpfiletest())
+	{
+		return -1;
+	}
+	if (ftpfiletest())
 	{
 		return -1;
 	}
