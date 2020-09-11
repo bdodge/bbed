@@ -50,9 +50,12 @@ static int file_http_close(file_t *file)
 	{
 		remote_file->file->file_close(file);
 		remote_file->file = NULL;
-		return 0;
 	}
-    return -1;
+	if (remote_file->local_path[0])
+	{
+		filesys_delete(remote_file->local_path);
+	}
+	return 0;
 }
 
 /// \brief Read a http:// file

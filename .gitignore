@@ -1,4 +1,6 @@
 .obj*
 bbuftest
+bfiletest
 *.bak
-
+ftp_local.*
+http_local.*
